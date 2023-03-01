@@ -6,6 +6,7 @@ import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 class Request {
     int action;
@@ -47,13 +48,14 @@ class Request {
 
 class ChaosMonkey {
     Random random = new Random();
+
     List<NetworkObject> objects = new ArrayList<>();
 
     List<NetworkObject> panicObjects = new ArrayList<>();
 
     public ChaosMonkey(ScheduledExecutorService executor, NetworkObject root) {
         fill(root);
-        executor.scheduleAtFixedRate(this::panic, 3, 3, TimeUnit.SECONDS);
+        executor.scheduleAtFixedRate(this::panic, 100, 100, TimeUnit.MILLISECONDS);
     }
 
     private void fill(NetworkObject root) {
@@ -64,12 +66,13 @@ class ChaosMonkey {
     }
 
     public void panic() {
-        if(random.nextInt() % 2 == 0) {
+        System.out.println("throwing random panic");
+        if(random.nextInt(100) % 2 == 0) {
             var obj = objects.remove(random.nextInt(objects.size()));
             obj.panic(true);
             panicObjects.add(obj);
         }
-        if(random.nextInt() % 2 == 0) {
+        if(random.nextInt(100) % 2 == 0) {
             var obj = panicObjects.remove(random.nextInt(panicObjects.size()));
             obj.panic(false);
             objects.add(obj);
@@ -80,12 +83,22 @@ class ChaosMonkey {
 public class UsersServiceTest {
 
     Random random = new Random();
+
     List<Request> requests = createRequests();
 
     private List<Request> createRequests() {
+        Map<String, String> passwords = new HashMap<>();
+        List<String> users = new ArrayList<>();
         List<Request> requests = new LinkedList<>();
-        for(int i = 0; i < 1000000; i++) {
-            requests.add(new Request(random.nextInt(2), UUID.randomUUID().toString().substring(0, 7), UUID.randomUUID().toString().substring(0, 7)));
+        for(int i = 0; i < 1000; i++) {
+            var user = UUID.randomUUID().toString().substring(0, 7);
+            users.add(user);
+            passwords.put(user, UUID.randomUUID().toString().substring(0, 7));
+            requests.add(new Request(1, user, passwords.get(user)));
+        }
+        for(int i = 0; i < 1000; i++) {
+            var user = users.get(random.nextInt(users.size()));
+            requests.add(new Request(0, user, passwords.get(user)));
         }
         return requests;
     }
@@ -98,21 +111,28 @@ public class UsersServiceTest {
         requests.parallelStream()
                 .forEach(x -> {
             try {
-                System.out.println("sending request: " + x.toString());
                 long ts = System.currentTimeMillis();
                 if (x.action == 0) {
+                    System.out.println("sending auth request: " + x.toString());
                     x.token = cloud.auth(x.username, x.password);
                 } else {
+                    System.out.println("sending register request: " + x.toString());
                     cloud.register(x.username, x.password);
                 }
                 x.latency = System.currentTimeMillis() - ts;
                 System.out.println("request success: " + x.toString());
+                Thread.sleep(100);
             }
             catch (Exception ex) {
                 System.out.println("request error: " + x.toString());
                 x.error = true;
             }
         });
+
+        var miss= requests.stream().filter(x -> x.action == 0 && x.token == null).count();
+        var total= requests.stream().filter(x -> x.action == 0).count();
+        var missPercent = (double) miss / total * 100d;
+        System.out.println("total: " + total + ", misses: " + miss + ", missPercent: " + missPercent + "%");
     }
 
 }
